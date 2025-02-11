@@ -1,0 +1,37 @@
+name: Build APK
+
+on:
+  repository_dispatch:
+    types: [build-apk]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Set up JDK
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Modify WebView URL (Dynamic URL Injection)
+        run: |
+          sed -i 's|https://default.com|'${{ github.event.client_payload.url }}'|g' app/src/main/java/com/example/app/MainActivity.kt
+
+      - name: Build APK
+        run: ./gradlew assembleRelease
+
+      - name: Upload APK to Firebase Storage
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: |
+          curl -X POST -H "Authorization: Bearer $FIREBASE_TOKEN" \
+          -F "file=@app/build/outputs/apk/release/app-release.apk" \
+          "https://firebasestorage.googleapis.com/v0/b/YOUR_BUCKET/o?uploadType=media&name=app-release.apk"
