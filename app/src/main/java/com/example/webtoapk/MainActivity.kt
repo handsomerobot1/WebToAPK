@@ -2,7 +2,9 @@ package com.example.webtoapk
 
 import android.app.DownloadManager
 import android.content.Context
+import android.content.Intent
 import android.net.ConnectivityManager
+import android.net.Network
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
@@ -22,8 +24,19 @@ class MainActivity : AppCompatActivity() {
     private lateinit var swipeRefresh: SwipeRefreshLayout
     private lateinit var progressBar: ProgressBar
 
+    // Make nullable to avoid uninitialized crashes
+    private var connectivityManager: ConnectivityManager? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Check internet at startup
+        if (!isNetworkAvailable()) {
+            startNoInternetActivity()
+            return
+        }
+
         setContentView(R.layout.activity_main)
 
         swipeRefresh = findViewById(R.id.swipeRefresh)
@@ -32,17 +45,11 @@ class MainActivity : AppCompatActivity() {
 
         val url = intent.getStringExtra("URL") ?: "https://default.com"
 
-        // WebView settings
         val webSettings = webView.settings
         webSettings.javaScriptEnabled = true
         webSettings.domStorageEnabled = true
-        webSettings.cacheMode = if (isNetworkAvailable()) {
-            WebSettings.LOAD_DEFAULT
-        } else {
-            WebSettings.LOAD_CACHE_ELSE_NETWORK
-        }
+        webSettings.cacheMode = WebSettings.LOAD_DEFAULT
 
-        // WebView client
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 swipeRefresh.isRefreshing = false
@@ -50,7 +57,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Loading progress
         webView.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                 progressBar.visibility = android.view.View.VISIBLE
@@ -61,7 +67,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Download listener
         webView.setDownloadListener(DownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
             try {
                 val request = DownloadManager.Request(Uri.parse(url))
@@ -74,7 +79,6 @@ class MainActivity : AppCompatActivity() {
                 request.allowScanningByMediaScanner()
                 request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
 
-                // Scoped storage - Works on Android 10+
                 val fileName = contentDisposition.substringAfter("filename=", "downloaded_file")
                     .replace("\"", "")
                 request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
@@ -87,12 +91,34 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
-        // Load page
         webView.loadUrl(url)
 
-        // Pull to refresh
         swipeRefresh.setOnRefreshListener {
-            webView.reload()
+            if (isNetworkAvailable()) {
+                webView.reload()
+            } else {
+                swipeRefresh.isRefreshing = false
+                Toast.makeText(this, "No Internet Connection", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        // Setup network callback to detect internet loss while app running
+        connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        networkCallback = object : ConnectivityManager.NetworkCallback() {
+            override fun onLost(network: Network) {
+                runOnUiThread {
+                    startNoInternetActivity()
+                }
+            }
+        }
+        connectivityManager?.registerDefaultNetworkCallback(networkCallback!!)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // Unregister network callback only if initialized
+        if (connectivityManager != null && networkCallback != null) {
+            connectivityManager?.unregisterNetworkCallback(networkCallback!!)
         }
     }
 
@@ -106,7 +132,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun isNetworkAvailable(): Boolean {
         val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val networkInfo = cm.activeNetworkInfo
-        return networkInfo != null && networkInfo.isConnected
+        val network = cm.activeNetwork
+        val capabilities = cm.getNetworkCapabilities(network)
+        return capabilities != null
+    }
+
+    private fun startNoInternetActivity() {
+        val intent = Intent(this, No_iternet::class.java)
+        startActivity(intent)
+        finish()
     }
 }
